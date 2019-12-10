@@ -7,8 +7,8 @@ import {
 
 /**
  * TODO:LoginPerSite
- * There are permission gains here once `domain.permissions` is converted
- * to key:value instead of an array.
+ * There are performance gains here once `domain.permissions` is converted
+ * to key:value instead of an array. (requires update to rpc-cap)
  */
 
 const permissionsSelector = (state, origin) => {

@@ -406,7 +406,7 @@ class PreferencesController {
 
     const { selectedAddressHistory } = this.store.getState()
 
-    // spare us the state update if it's unnecessary
+    // only update state if it's necessary
     if (selectedAddressHistory[origin] !== address) {
       selectedAddressHistory[origin] = address
       this.store.updateState({ selectedAddressHistory })
