@@ -169,7 +169,7 @@ class PermissionsController {
 
     if (ethAccounts) {
 
-      await this.validateExposedAccounts(accounts)
+      await this.validatePermittedAccounts(accounts)
 
       if (!ethAccounts.caveats) {
         ethAccounts.caveats = []
@@ -268,7 +268,7 @@ class PermissionsController {
    */
   async updatePermittedAccounts (origin, accounts) {
 
-    await this.validateExposedAccounts(accounts)
+    await this.validatePermittedAccounts(accounts)
 
     this.permissions.updateCaveatFor(
       origin, 'eth_accounts', CAVEAT_NAMES.exposedAccounts, accounts
@@ -286,7 +286,7 @@ class PermissionsController {
    *
    * @param {string[]} accounts - An array of addresses.
    */
-  async validateExposedAccounts (accounts) {
+  async validatePermittedAccounts (accounts) {
 
     if (!Array.isArray(accounts) || accounts.length === 0) {
       throw new Error('Must provide non-empty array of account(s).')
@@ -338,9 +338,13 @@ class PermissionsController {
       return
     }
 
-    this.notifyDomain(
-      origin, { method: NOTIFICATION_NAMES.accountsChanged, payload: [account] }
+    const newPermittedAccounts = [account].concat(
+      permittedAccounts.filter(_account => _account !== account)
     )
+
+    // update permitted accounts to ensure that accounts are returned
+    // in the same order every time
+    this.updatePermittedAccounts(origin, newPermittedAccounts)
   }
 
   /**
