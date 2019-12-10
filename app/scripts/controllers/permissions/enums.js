@@ -4,10 +4,10 @@ module.exports = {
   LOG_STORE_KEY: 'permissionsLog',
   METADATA_STORE_KEY: 'domainMetadata',
   CAVEAT_NAMES: {
-    exposedAccounts: 'exposedAccounts'
+    exposedAccounts: 'exposedAccounts',
   },
   NOTIFICATION_NAMES: {
-    accountsChanged: 'wallet_accountsChanged'
+    accountsChanged: 'wallet_accountsChanged',
   },
   SAFE_METHODS: [
     'web3_sha3',
@@ -56,6 +56,6 @@ module.exports = {
     'eth_submitHashrate',
     'eth_submitWork',
     'eth_syncing',
-    'eth_uninstallFilter'
-  ]
+    'eth_uninstallFilter',
+  ],
 }
