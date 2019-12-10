@@ -221,11 +221,11 @@ const actions = {
   gasLoadingStarted,
   gasLoadingFinished,
   // app messages
-  showAccountDetail: showAccountDetail,
+  showAccountDetail,
   BACK_TO_ACCOUNT_DETAIL: 'BACK_TO_ACCOUNT_DETAIL',
-  backToAccountDetail: backToAccountDetail,
-  showAccountsPage: showAccountsPage,
-  showConfTxPage: showConfTxPage,
+  backToAccountDetail,
+  showAccountsPage,
+  showConfTxPage,
   // config screen
   SHOW_CONFIG_PAGE: 'SHOW_CONFIG_PAGE',
   SET_RPC_TARGET: 'SET_RPC_TARGET',
@@ -1616,7 +1616,7 @@ function setSelectedAddress (address) {
   }
 }
 
-function showAccountDetail (address) {
+function showAccountDetail (address, origin) {
   return (dispatch) => {
     dispatch(actions.showLoadingIndication())
     log.debug(`background.setSelectedAddress`)
@@ -1625,6 +1625,7 @@ function showAccountDetail (address) {
       if (err) {
         return dispatch(actions.displayWarning(err.message))
       }
+      background.handleNewAccountSelected(origin, address)
       dispatch(updateTokens(tokens))
       dispatch({
         type: actions.SHOW_ACCOUNT_DETAIL,

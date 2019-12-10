@@ -9,18 +9,15 @@ const getRestrictedMethods = require('./restrictedMethods')
 const createMethodMiddleware = require('./methodMiddleware')
 const PermissionsLogController = require('./permissionsLog')
 
-// Methods that do not require any permissions to use:
-const SAFE_METHODS = require('./permissions-safe-methods.json')
-
-// some constants
-const METADATA_STORE_KEY = 'domainMetadata'
-const LOG_STORE_KEY = 'permissionsLog'
-const HISTORY_STORE_KEY = 'permissionsHistory'
-const WALLET_METHOD_PREFIX = 'wallet_'
-const CAVEAT_NAMES = {
-  exposedAccounts: 'exposedAccounts',
-}
-const ACCOUNTS_CHANGED_NOTIFICATION = 'wallet_accountsChanged'
+const {
+  SAFE_METHODS, // methods that do not require any permissions to use
+  WALLET_PREFIX,
+  METADATA_STORE_KEY,
+  LOG_STORE_KEY,
+  HISTORY_STORE_KEY,
+  CAVEAT_NAMES,
+  NOTIFICATION_NAMES,
+} = require('./enums')
 
 class PermissionsController {
 
@@ -43,7 +40,7 @@ class PermissionsController {
     this._platform = platform
     this._restrictedMethods = getRestrictedMethods(this)
     this.permissionsLogController = new PermissionsLogController({
-      walletPrefix: WALLET_METHOD_PREFIX,
+      walletPrefix: WALLET_PREFIX,
       restrictedMethods: Object.keys(this._restrictedMethods),
       ignoreMethods: [ 'wallet_sendDomainMetadata' ],
       store: this.store,
@@ -51,29 +48,6 @@ class PermissionsController {
       historyStoreKey: HISTORY_STORE_KEY,
     })
     this._initializePermissions(restoredPermissions)
-  }
-
-  notifyDomain (origin, payload) {
-
-    // if the accounts changed from the perspective of the dapp,
-    // update "last seen" time for the origin and account(s)
-    // exception: no accounts -> no times to update
-    if (
-      payload.method === ACCOUNTS_CHANGED_NOTIFICATION &&
-      payload.result && payload.result.length > 0
-    ) {
-      this.permissionsLogController.updateAccountsHistory(
-        origin, payload.result
-      )
-    }
-
-    this._notifyDomain(origin, payload)
-
-    // NOTE:
-    // we don't check for accounts changing in the notifyAllDomains case,
-    // because the log only records when accounts were last seen,
-    // and the accounts only change for all domains at once when permissions
-    // are removed
   }
 
   createMiddleware ({ origin, extensionId }) {
@@ -133,31 +107,6 @@ class PermissionsController {
   }
 
   /**
-   * Submits a permissions request to rpc-cap. Internal use only.
-   *
-   * @param {string} origin - The origin string.
-   * @param {IRequestedPermissions} permissions - The requested permissions.
-   */
-  _requestPermissions (origin, permissions) {
-    return new Promise((resolve, reject) => {
-
-      const req = { method: 'wallet_requestPermissions', params: [permissions] }
-      const res = {}
-      this.permissions.providerMiddlewareFunction(
-        { origin }, req, res, () => {}, _end
-      )
-
-      function _end (err) {
-        if (err || res.error) {
-          reject(err || res.error)
-        } else {
-          resolve(res.result)
-        }
-      }
-    })
-  }
-
-  /**
    * User approval callback. The request can fail if the request is invalid.
    *
    * @param {object} approved - the approved request object
@@ -208,6 +157,65 @@ class PermissionsController {
   }
 
   /**
+   * Finalizes a permissions request.
+   * Throws if request validation fails.
+   *
+   * @param {Object} requestedPermissions - The requested permissions.
+   * @param {string[]} accounts - The accounts to expose, if any.
+   */
+  async finalizePermissionsRequest (requestedPermissions, accounts) {
+
+    const { eth_accounts: ethAccounts } = requestedPermissions
+
+    if (ethAccounts) {
+
+      await this.validateExposedAccounts(accounts)
+
+      if (!ethAccounts.caveats) {
+        ethAccounts.caveats = []
+      }
+
+      // caveat names are unique, and we will only construct this caveat here
+      ethAccounts.caveats = ethAccounts.caveats.filter(c => (
+        c.name !== CAVEAT_NAMES.exposedAccounts
+      ))
+
+      ethAccounts.caveats.push(
+        {
+          type: 'filterResponse',
+          value: accounts,
+          name: CAVEAT_NAMES.exposedAccounts,
+        },
+      )
+    }
+  }
+
+  /**
+   * Removes the given permissions for the given domain.
+   * @param {object} domains { origin: [permissions] }
+   */
+  removePermissionsFor (domains) {
+
+    Object.entries(domains).forEach(([origin, perms]) => {
+
+      this.permissions.removePermissionsFor(
+        origin,
+        perms.map(methodName => {
+
+          if (methodName === 'eth_accounts') {
+            this.notifyDomain(
+              origin,
+              { method: NOTIFICATION_NAMES.accountsChanged, result: [] }
+            )
+          }
+
+          return { parentCapability: methodName }
+        })
+      )
+    })
+  }
+
+  /**
    * Grants the given origin the eth_accounts permission for the given account(s).
    * This method should ONLY be called as a result of direct user action in the UI,
    * with the intention of supporting legacy dapps that don't support EIP 1102.
@@ -248,13 +256,17 @@ class PermissionsController {
   }
 
   /**
-   * Update the accounts exposed to the given origin.
+   * Update the accounts exposed to the given origin. Changes the eth_accounts
+   * permissions and emits accountsChanged.
+   * At least one account must be exposed. If no accounts are to be exposed, the
+   * eth_accounts permissions should be removed completely.
+   *
    * Throws error if the update fails.
    *
    * @param {string} origin - The origin to change the exposed accounts for.
    * @param {string[]} accounts - The new account(s) to expose.
    */
-  async updateExposedAccounts (origin, accounts) {
+  async updatePermittedAccounts (origin, accounts) {
 
     await this.validateExposedAccounts(accounts)
 
@@ -263,43 +275,9 @@ class PermissionsController {
     )
 
     this.notifyDomain(origin, {
-      method: ACCOUNTS_CHANGED_NOTIFICATION,
+      method: NOTIFICATION_NAMES.accountsChanged,
       result: accounts,
     })
-  }
-
-  /**
-   * Finalizes a permissions request.
-   * Throws if request validation fails.
-   *
-   * @param {Object} requestedPermissions - The requested permissions.
-   * @param {string[]} accounts - The accounts to expose, if any.
-   */
-  async finalizePermissionsRequest (requestedPermissions, accounts) {
-
-    const { eth_accounts: ethAccounts } = requestedPermissions
-
-    if (ethAccounts) {
-
-      await this.validateExposedAccounts(accounts)
-
-      if (!ethAccounts.caveats) {
-        ethAccounts.caveats = []
-      }
-
-      // caveat names are unique, and we will only construct this caveat here
-      ethAccounts.caveats = ethAccounts.caveats.filter(c => (
-        c.name !== CAVEAT_NAMES.exposedAccounts
-      ))
-
-      ethAccounts.caveats.push(
-        {
-          type: 'filterResponse',
-          value: accounts,
-          name: CAVEAT_NAMES.exposedAccounts,
-        },
-      )
-    }
   }
 
   /**
@@ -323,29 +301,46 @@ class PermissionsController {
     })
   }
 
-  /**
-   * Removes the given permissions for the given domain.
-   * @param {object} domains { origin: [permissions] }
-   */
-  removePermissionsFor (domains) {
+  notifyDomain (origin, payload) {
 
-    Object.entries(domains).forEach(([origin, perms]) => {
-
-      this.permissions.removePermissionsFor(
-        origin,
-        perms.map(methodName => {
-
-          if (methodName === 'eth_accounts') {
-            this.notifyDomain(
-              origin,
-              { method: ACCOUNTS_CHANGED_NOTIFICATION, result: [] }
-            )
-          }
-
-          return { parentCapability: methodName }
-        })
+    // if the accounts changed from the perspective of the dapp,
+    // update "last seen" time for the origin and account(s)
+    // exception: no accounts -> no times to update
+    if (
+      payload.method === NOTIFICATION_NAMES.accountsChanged &&
+      Array.isArray(payload.result)
+    ) {
+      this.permissionsLogController.updateAccountsHistory(
+        origin, payload.result
       )
-    })
+    }
+
+    this._notifyDomain(origin, payload)
+
+    // NOTE:
+    // we don't check for accounts changing in the notifyAllDomains case,
+    // because the log only records when accounts were last seen,
+    // and the accounts only change for all domains at once when permissions
+    // are removed
+  }
+
+  /**
+   * When a new account is selected in the UI for 'origin', emit accountsChanged
+   * to 'origin' if the selected account is permitted.
+   * @param {string} origin - The origin.
+   * @param {string} account - The newly selected account's address.
+   */
+  async handleNewAccountSelected (origin, account) {
+
+    const permittedAccounts = await this.getAccounts(origin)
+
+    if (!account || !permittedAccounts.includes(account)) {
+      return
+    }
+
+    this.notifyDomain(
+      origin, { method: NOTIFICATION_NAMES.accountsChanged, payload: [account] }
+    )
   }
 
   /**
@@ -354,8 +349,33 @@ class PermissionsController {
   clearPermissions () {
     this.permissions.clearDomains()
     this.notifyAllDomains({
-      method: ACCOUNTS_CHANGED_NOTIFICATION,
+      method: NOTIFICATION_NAMES.accountsChanged,
       result: [],
+    })
+  }
+
+  /**
+   * Submits a permissions request to rpc-cap. Internal, background use only.
+   *
+   * @param {string} origin - The origin string.
+   * @param {IRequestedPermissions} permissions - The requested permissions.
+   */
+  _requestPermissions (origin, permissions) {
+    return new Promise((resolve, reject) => {
+
+      const req = { method: 'wallet_requestPermissions', params: [permissions] }
+      const res = {}
+      this.permissions.providerMiddlewareFunction(
+        { origin }, req, res, () => {}, _end
+      )
+
+      function _end (err) {
+        if (err || res.error) {
+          reject(err || res.error)
+        } else {
+          resolve(res.result)
+        }
+      }
     })
   }
 
@@ -378,7 +398,7 @@ class PermissionsController {
       safeMethods: SAFE_METHODS,
 
       // optional prefix for internal methods
-      methodPrefix: WALLET_METHOD_PREFIX,
+      methodPrefix: WALLET_PREFIX,
 
       restrictedMethods: this._restrictedMethods,
 
@@ -412,5 +432,5 @@ module.exports = {
 
 
 function prefix (method) {
-  return WALLET_METHOD_PREFIX + method
+  return WALLET_PREFIX + method
 }

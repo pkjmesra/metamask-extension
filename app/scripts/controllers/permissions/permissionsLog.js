@@ -1,6 +1,7 @@
 
 const clone = require('clone')
 const { isValidAddress } = require('ethereumjs-util')
+const { CAVEAT_NAMES } = require('./enums')
 
 const LOG_LIMIT = 100
 
@@ -139,7 +140,7 @@ class PermissionsLogController {
 
     const accounts = {}
     for (const c of perm.caveats) {
-      if (c.type === 'filterResponse' && Array.isArray(c.value)) {
+      if (c.name === CAVEAT_NAMES.exposedAccounts && Array.isArray(c.value)) {
         for (const v of c.value) {
           if (isValidAddress(v)) {
             accounts[v] = true
@@ -235,6 +236,10 @@ class PermissionsLogController {
   }
 
   updateAccountsHistory (origin, accounts) {
+
+    if (accounts.length === 0) {
+      return
+    }
 
     const accountToTimeMap = getAccountToTimeMap(accounts, Date.now())
 
